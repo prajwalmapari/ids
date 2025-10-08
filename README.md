@@ -34,7 +34,7 @@ cp .env.example .env
 # Edit .env with your Azure credentials
 
 # Test the system
-python pure_cloud_main.py --mode image --input group.png
+python main.py --mode image --input group.png
 ```
 
 
