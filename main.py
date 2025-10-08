@@ -5,11 +5,22 @@ import os
 import argparse
 from database import FaceDatabase, draw_faces_with_recognition
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 def initialize_face_analysis():
     """Initialize the face analysis model"""
     print("Initializing face analysis model...")
-    app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
-    app.prepare(ctx_id=0, det_size=(640, 640))
+    
+    # Get configuration from environment variables
+    model_name = os.getenv('INSIGHTFACE_MODEL_NAME', 'buffalo_l')
+    providers = [os.getenv('INSIGHTFACE_PROVIDERS', 'CPUExecutionProvider')]
+    det_width = int(os.getenv('DETECTION_SIZE_WIDTH', '640'))
+    det_height = int(os.getenv('DETECTION_SIZE_HEIGHT', '640'))
+    
+    app = FaceAnalysis(name=model_name, providers=providers)
+    app.prepare(ctx_id=0, det_size=(det_width, det_height))
     print("Face analysis model initialized successfully")
     return app
 
@@ -145,7 +156,8 @@ def main():
     parser.add_argument('--output', type=str, help='Output path for results')
     parser.add_argument('--register-dir', type=str, default='known_faces',
                        help='Directory containing known face images for registration')
-    parser.add_argument('--threshold', type=float, default=0.6,
+    parser.add_argument('--threshold', type=float, 
+                       default=float(os.getenv('RECOGNITION_THRESHOLD', '0.6')),
                        help='Recognition threshold (0.0-1.0)')
     parser.add_argument('--no-display', action='store_true',
                        help='Do not display images (useful for batch processing)')

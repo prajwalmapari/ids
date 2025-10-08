@@ -6,6 +6,13 @@ insightface>=0.7.3
 numpy>=1.24.0
 onnxruntime>=1.15.0
 
+# For Azure blob storage integration
+requests>=2.31.0
+azure-storage-blob>=12.19.0
+
+# Environment variables management
+python-dotenv>=1.0.0
+
 # Optional dependencies for enhanced functionality
 Pillow>=10.0.0
 matplotlib>=3.7.0

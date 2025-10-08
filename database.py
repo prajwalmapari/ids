@@ -5,12 +5,16 @@ import os
 from typing import Dict, List, Tuple, Optional
 import json
 
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 class FaceDatabase:
-    def __init__(self, db_path: str = "face_database.pkl"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or os.getenv('FACE_DATABASE_FILE', 'face_database.pkl')
         self.known_faces: Dict[str, np.ndarray] = {}
         self.face_metadata: Dict[str, dict] = {}
-        self.recognition_threshold = 0.6  # Similarity threshold for recognition
+        self.recognition_threshold = float(os.getenv('RECOGNITION_THRESHOLD', '0.6'))
         self.load_database()
     
     def load_database(self):

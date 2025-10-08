@@ -129,3 +129,9 @@ The system is fully functional and ready for production use. You can start immed
 3. Testing with `./run_face_recognition.sh image your_photo.jpg`
 
 **Your multi-target face detection and recognition system is complete and ready to deploy!** 🎉
+
+# Process a single image
+python main.py --mode image --input group.png
+
+# Save output
+python main.py --mode image --input group.png --output result.jpg
