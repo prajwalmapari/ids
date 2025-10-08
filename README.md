@@ -46,8 +46,8 @@ python pure_cloud_main.py --mode image --input group.png
 ```bash
 # Azure Storage Configuration
 AZURE_STORAGE_CONNECTION_STRING=your_azure_connection_string
-AZURE_CONTAINER_NAME=sr001
-AZURE_EMBEDDINGS_BLOB=authorised/authorised person/authorized_persons.json
+AZURE_CONTAINER_NAME=container_name
+AZURE_EMBEDDINGS_BLOB=path/to/blob/storage/authorized_person.json
 AZURE_LOG_BLOB=logs/face.log
 AZURE_IMAGES_FOLDER=images/unauthorized/
 
@@ -58,7 +58,7 @@ RECOGNITION_THRESHOLD=0.6
 ### Azure Storage Structure
 
 ```
-Container: sr001/
+Container: container/
 ├── authorised/authorised person/
 │   └── authorized_persons.json     # Face embeddings database
 ├── logs/
@@ -72,17 +72,17 @@ Container: sr001/
 
 ### Process Image
 ```bash
-python pure_cloud_main.py --mode image --input photo.jpg --output results.json
+python main.py --mode image --input photo.jpg --output results.json
 ```
 
 ### Process Video
 ```bash
-python pure_cloud_main.py --mode video --input video.mp4 --output results.json
+python main.py --mode video --input video.mp4 --output results.json
 ```
 
 ### Live Webcam
 ```bash
-python pure_cloud_main.py --mode webcam
+python main.py --mode webcam
 ```
 
 ## 📊 System Performance
@@ -121,8 +121,6 @@ python pure_cloud_main.py --mode webcam
 - **Python-dotenv**: Environment configuration
 
 ## Persistent face database (auto-generated)
-
-- **Environment Variables**: All secrets in `.env` files
 
 - **Azure Integration**: Secure cloud authentication
 
