@@ -1,54 +1,104 @@
-# Byte-compiled / optimized / DLL files
+# Pure Cloud Face Recognition System - Git Ignore# Byte-compiled / optimized / DLL files
+
 __pycache__/
+
+# Python*.py[cod]
+
+__pycache__/*$py.class
+
 *.py[cod]
-*$py.class
 
-# C extensions
-*.so
+*$py.class# C extensions
 
-# Distribution / packaging
+*.pyc*.so
+
+*.pyo
+
+*.pyd# Distribution / packaging
+
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
+
+# Virtual Environmentbuild/
+
+env/develop-eggs/
+
+venv/dist/
+
+ENV/downloads/
+
+VENV/eggs/
+
 .eggs/
-lib/
-lib64/
+
+# Environment Variables (keep .env.example)lib/
+
+.envlib64/
+
 parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
+
+# Results and Logs (everything goes to Azure)sdist/
+
+*.jsonvar/
+
+*.logwheels/
+
+*.pklpip-wheel-metadata/
+
+results/share/python-wheels/
+
+logs/*.egg-info/
+
 .installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+# IDE Files*.egg
+
+.vscode/MANIFEST
+
+.idea/
+
+*.swp# PyInstaller
+
+*.swo#  Usually these files are written by a python script from a template
+
+*~#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+
 *.manifest
-*.spec
 
-# Installer logs
-pip-log.txt
+# System Files*.spec
+
+.DS_Store
+
+Thumbs.db# Installer logs
+
+.directorypip-log.txt
+
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
+# Temporary Files
+
+*.tmp# Unit test / coverage reports
+
+*.temphtmlcov/
+
+temp/.tox/
+
+tmp/.nox/
+
 .coverage
-.coverage.*
-.cache
+
+# InsightFace Models (auto-downloaded).coverage.*
+
+.insightface/.cache
+
 nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
+
+# Test Images (keep group.png for demo)coverage.xml
+
+# *.png*.cover
+
+# *.jpg*.py,cover
+
+# *.jpeg.hypothesis/
 .pytest_cache/
 
 # Translations
