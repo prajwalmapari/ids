@@ -1,73 +1,19 @@
-# Pure Cloud Face Recognition System# Pure Cloud Face Recognition System Requirements
+# Core dependencies with hardware optimization
+azure-storage-blob==12.21.0
+python-dotenv==1.0.1
+numpy>=1.21.0  # Vectorized operations support
+requests==2.32.3
 
-# Minimal dependencies for cloud-based processing with InsightFace# Minimal dependencies for cloud-based processing
+# Computer Vision with performance optimization
+opencv-python>=4.8.0  # Optimized computer vision
+insightface==0.7.3
 
+# ONNX Runtime with CPU optimization
+onnxruntime>=1.15.0  # CPU optimization support
 
-
-# Azure Storage for cloud data management# Azure Storage for cloud data management
-
-azure-storage-blob==12.21.0azure-storage-blob==12.21.0
-
-
-
-# Environment variable management# Environment variable management
-
-python-dotenv==1.0.1python-dotenv==1.0.1
-
-
-
-# Computer vision and image processing# Computer vision and image processing
-
-opencv-python==4.10.0.84opencv-python==4.10.0.84
-
-
-
-# InsightFace for accurate face recognition# InsightFace for accurate face recognition
-
-insightface==0.7.3insightface==0.7.3
-
-
-
-# Numerical processing# Numerical processing
-
-numpy==2.2.1numpy==2.2.1
-
-
-
-# HTTP requests (used by InsightFace and Azure)# HTTP requests (used by InsightFace)
-
-requests==2.32.3requests==2.32.3
-
-
-
-# Image processing support# Image processing support
-
-Pillow==10.4.0Pillow==10.4.0
-
-
-
-# ONNX runtime for InsightFace models# Additional InsightFace dependencies
-
-onnxruntime==1.20.1onnxruntime==1.20.1
-azure-storage-blob>=12.19.0
-
-# Environment variables management
-python-dotenv>=1.0.0
-
-# Optional dependencies for enhanced functionality
+# Image processing
 Pillow>=10.0.0
-matplotlib>=3.7.0
 
-# For video processing
-imageio>=2.31.0
-
-# For data handling
-pickle-mixin>=1.0.2
-
-# Development and testing (optional)
-pytest>=7.4.0
-black>=23.0.0
-flake8>=6.0.0
-
-# Note: The system will automatically download the InsightFace models on first run
-# Models are stored in ~/.insightface/models/ directory
+# Optional dependencies for development
+matplotlib>=3.5.0
+imageio>=2.25.0
