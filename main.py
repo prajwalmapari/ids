@@ -51,8 +51,8 @@ class PureCloudFaceProcessor:
         self.connection_string = os.getenv('AZURE_STORAGE_CONNECTION_STRING')
         self.container_name = os.getenv('AZURE_CONTAINER_NAME', 'sr001')
         self.embeddings_blob = os.getenv('AZURE_EMBEDDINGS_BLOB', 'authorised/authorised person/authorized_persons.json')
-        self.log_blob = os.getenv('AZURE_LOG_BLOB', 'logs/face.log')
-        self.images_folder = os.getenv('AZURE_IMAGES_FOLDER', 'images/unauthorized/')
+        self.log_blob = os.getenv('AZURE_LOG_BLOB', 'unauthorised_person/detection_logs/')
+        self.images_folder = os.getenv('AZURE_IMAGES_FOLDER', 'unauthorised_person/Image/')
         
         if not self.connection_string:
             raise ValueError("AZURE_STORAGE_CONNECTION_STRING not found in environment variables")
@@ -166,7 +166,7 @@ class PureCloudFaceProcessor:
             return "Error", 0.0, {}
     
     def _upload_image_to_azure(self, image: np.ndarray, filename: str) -> str:
-        """Upload unauthorized person image to Azure storage"""
+        """Upload unauthorized person image to Azure storage with date-based folder structure"""
         try:
             # Convert image to bytes in memory
             success, buffer = cv2.imencode('.jpg', image)
@@ -175,8 +175,10 @@ class PureCloudFaceProcessor:
             
             image_bytes = buffer.tobytes()
             
-            # Upload directly to Azure
-            blob_path = f"{self.images_folder}{filename}"
+            # Create date-based folder structure
+            today = datetime.now().strftime("%Y-%m-%d")
+            blob_path = f"{self.images_folder}{today}/{filename}"
+            
             blob_client = self.blob_service_client.get_blob_client(
                 container=self.container_name,
                 blob=blob_path
@@ -186,7 +188,7 @@ class PureCloudFaceProcessor:
             
             # Return the Azure blob URL
             blob_url = f"https://{blob_client.account_name}.blob.core.windows.net/{self.container_name}/{blob_path}"
-            print(f"📤 Uploaded unauthorized image to Azure: {filename}")
+            print(f"📤 Uploaded unauthorized image to Azure: {today}/{filename}")
             return blob_url
             
         except Exception as e:
@@ -194,31 +196,75 @@ class PureCloudFaceProcessor:
             return ""
     
     def _log_prediction_to_azure(self, log_entry: Dict[str, Any]) -> bool:
-        """Log face recognition prediction directly to Azure"""
+        """Log face recognition prediction to Azure in JSON format with daily files"""
         try:
-            # Format log entry
-            timestamp = datetime.now().isoformat()
-            log_line = json.dumps({
-                'timestamp': timestamp,
-                **log_entry
-            }) + '\n'
+            # Create daily log file name
+            today = datetime.now().strftime("%Y-%m-%d")
+            log_filename = f"detection_log_{today}.json"
+            log_blob_path = f"{self.log_blob}{log_filename}"
             
-            # Download existing log file from Azure
             blob_client = self.blob_service_client.get_blob_client(
                 container=self.container_name,
-                blob=self.log_blob
+                blob=log_blob_path
             )
             
+            # Download existing log data
             try:
-                existing_content = blob_client.download_blob().readall().decode('utf-8')
-            except ResourceNotFoundError:
-                existing_content = ""
+                existing_data = blob_client.download_blob().readall().decode('utf-8')
+                log_data = json.loads(existing_data)
+            except (ResourceNotFoundError, json.JSONDecodeError):
+                # Initialize new log structure
+                log_data = {
+                    "metadata": {
+                        "last_updated": datetime.now().isoformat(),
+                        "total_detections": 0,
+                        "unauthorized_count": 0,  
+                        "authorized_count": 0,
+                        "log_file": log_filename,
+                        "azure_container": self.container_name
+                    },
+                    "detections": []
+                }
             
-            # Append new log entry and upload back to Azure
-            updated_content = existing_content + log_line
-            blob_client.upload_blob(updated_content.encode('utf-8'), overwrite=True)
+            # Process each face detection from log_entry
+            for face in log_entry.get('faces', []):
+                detection_id = log_data["metadata"]["total_detections"] + 1
+                timestamp = datetime.now()
+                
+                # Determine status and alert level
+                status = "AUTHORIZED" if face['authorized'] else "UNAUTHORIZED"
+                alert_level = "LOW" if face['authorized'] else "HIGH"
+                
+                # Create detection entry
+                detection_entry = {
+                    "id": detection_id,
+                    "timestamp": timestamp.isoformat(),
+                    "human_time": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                    "status": status,
+                    "person_name": face['name'],
+                    "confidence": f"{int(face['confidence'] * 100)}%",
+                    "location": "Camera",
+                    "alert_level": alert_level,
+                    "additional_info": None
+                }
+                
+                log_data["detections"].append(detection_entry)
+                
+                # Update counters
+                log_data["metadata"]["total_detections"] += 1
+                if face['authorized']:
+                    log_data["metadata"]["authorized_count"] += 1
+                else:
+                    log_data["metadata"]["unauthorized_count"] += 1
             
-            print(f"📝 Logged prediction to Azure: {self.log_blob}")
+            # Update metadata
+            log_data["metadata"]["last_updated"] = datetime.now().isoformat()
+            
+            # Upload updated log data
+            log_json = json.dumps(log_data, indent=2, ensure_ascii=False)
+            blob_client.upload_blob(log_json.encode('utf-8'), overwrite=True)
+            
+            print(f"📝 Logged {len(log_entry.get('faces', []))} detections to Azure: {log_filename}")
             return True
             
         except Exception as e:
