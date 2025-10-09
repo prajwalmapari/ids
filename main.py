@@ -360,6 +360,8 @@ class OptimizedFaceProcessor:
             log_filename = f"detection_log_{today}.json"
             log_blob_path = f"{self.log_blob}{log_filename}"
             
+            print(f"🔍 Logging to Azure: {log_blob_path}")  # Debug output
+            
             blob_client = self.blob_service_client.get_blob_client(
                 container=self.container_name,
                 blob=log_blob_path
@@ -369,7 +371,9 @@ class OptimizedFaceProcessor:
             try:
                 existing_data = blob_client.download_blob().readall().decode('utf-8')
                 log_data = json.loads(existing_data)
-            except (ResourceNotFoundError, json.JSONDecodeError):
+                print(f"📝 Found existing log with {len(log_data.get('detections', []))} entries")  # Debug
+            except (ResourceNotFoundError, json.JSONDecodeError) as e:
+                print(f"📝 Creating new log file: {e}")  # Debug
                 # Initialize new log structure
                 log_data = {
                     "metadata": {
@@ -384,7 +388,10 @@ class OptimizedFaceProcessor:
                 }
             
             # Process each face detection from log_entry
-            for face in log_entry.get('faces', []):
+            faces_to_log = log_entry.get('faces', [])
+            print(f"📝 Processing {len(faces_to_log)} faces for logging")  # Debug
+            
+            for face in faces_to_log:
                 detection_id = log_data["metadata"]["total_detections"] + 1
                 timestamp = datetime.now()
                 
@@ -406,6 +413,7 @@ class OptimizedFaceProcessor:
                 }
                 
                 log_data["detections"].append(detection_entry)
+                print(f"📝 Added detection: {status} - {face['name']} ({face['confidence']:.2f})")  # Debug
                 
                 # Update counters
                 log_data["metadata"]["total_detections"] += 1
@@ -421,11 +429,13 @@ class OptimizedFaceProcessor:
             log_json = json.dumps(log_data, indent=2, ensure_ascii=False)
             blob_client.upload_blob(log_json.encode('utf-8'), overwrite=True)
             
-            print(f"📝 Logged {len(log_entry.get('faces', []))} detections to Azure: {log_filename}")
+            print(f"📝 Successfully logged {len(log_entry.get('faces', []))} detections to Azure: {log_filename}")
             return True
             
         except Exception as e:
             print(f"❌ Error logging to Azure: {e}")
+            import traceback
+            traceback.print_exc()  # More detailed error info
             return False
     
     def process_image_optimized(self, image: np.ndarray, source_info: str = "") -> Dict[str, Any]:
