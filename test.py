@@ -4,6 +4,7 @@ Live Feed Test for Optimized Face Recognition System
 Uses the existing optimized main.py system but processes live camera feed
 Stores only unique unauthorized persons to avoid redundancy
 Auto-refreshes authorized persons every 5 seconds
+Integrated with audio alert system for unauthorized person detection
 """
 
 import cv2
@@ -14,10 +15,24 @@ from datetime import datetime
 import time
 import json
 import threading
+import importlib.util
 from typing import Dict, List, Tuple
 
 # Import the optimized system from main.py
 from main import OptimizedFaceRecognitionSystem
+
+# Import audio alert system
+try:
+    spec = importlib.util.spec_from_file_location("audio_alert", "/home/ubuntu24/ids/audio-alert.py")
+    audio_alert = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audio_alert)
+    AudioAlertSystem = audio_alert.AudioAlertSystem
+    AUDIO_ALERTS_AVAILABLE = True
+    print("✅ Audio alert system loaded successfully")
+except Exception as e:
+    AUDIO_ALERTS_AVAILABLE = False
+    print(f"⚠️ Audio alert system not available: {e}")
+    AudioAlertSystem = None
 
 class AuthorizedPersonsRefresher:
     """Automatically refresh authorized persons from Azure every 5 seconds"""
@@ -217,6 +232,118 @@ class UniqueUnauthorizedTracker:
             'database_size': len(self.unauthorized_database)
         }
 
+class AudioAlertManager:
+    """Manages audio alerts for unauthorized person detection with severity-based alerts"""
+    
+    def __init__(self):
+        self.audio_system = None
+        self.last_alert_time = {}  # Track cooldown periods for different alert types
+        self.cooldown_periods = {
+            'single_unauthorized': 5,      # 5 seconds between single person alerts
+            'multiple_unauthorized': 3,    # 3 seconds between multiple person alerts  
+            'continuous_detection': 15     # 15 seconds between continuous detection alerts
+        }
+        self.consecutive_detections = 0
+        self.last_detection_time = 0
+        
+        # Initialize audio system if available
+        if AUDIO_ALERTS_AVAILABLE and AudioAlertSystem:
+            try:
+                self.audio_system = AudioAlertSystem()
+                print("🔊 Audio alert manager initialized successfully")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize audio alert system: {e}")
+                self.audio_system = None
+        else:
+            print("⚠️ Audio alerts disabled - AudioAlertSystem not available")
+    
+    def process_detection_results(self, results: dict, frame_count: int):
+        """Process detection results and trigger appropriate audio alerts"""
+        if not self.audio_system:
+            return  # Skip if audio system not available
+        
+        try:
+            current_time = time.time()
+            unauthorized_count = results.get('unauthorized_count', 0)
+            unique_unauthorized_count = results.get('unique_unauthorized_count', 0)
+            
+            # Update consecutive detection tracking
+            if unauthorized_count > 0:
+                if current_time - self.last_detection_time < 2.0:  # Within 2 seconds
+                    self.consecutive_detections += 1
+                else:
+                    self.consecutive_detections = 1
+                self.last_detection_time = current_time
+            else:
+                self.consecutive_detections = 0
+            
+            # Determine alert severity and trigger appropriate sound
+            if unauthorized_count >= 3:
+                # CRITICAL: Multiple unauthorized persons detected
+                self._trigger_alert('multiple_unauthorized', 'critical', current_time,
+                                  f"CRITICAL: {unauthorized_count} unauthorized persons detected!")
+                                  
+            elif self.consecutive_detections >= 5:
+                # HIGH: Continuous unauthorized activity  
+                self._trigger_alert('continuous_detection', 'high', current_time,
+                                  f"HIGH: Continuous unauthorized activity detected ({self.consecutive_detections} consecutive frames)")
+                                  
+            elif unauthorized_count > 0:
+                # NORMAL: Single unauthorized person
+                self._trigger_alert('single_unauthorized', 'normal', current_time,
+                                  f"NORMAL: {unauthorized_count} unauthorized person(s) detected")
+            
+        except Exception as e:
+            print(f"⚠️ Error in audio alert processing: {e}")
+    
+    def _trigger_alert(self, alert_type: str, priority: str, current_time: float, message: str):
+        """Trigger audio alert if cooldown period has passed"""
+        try:
+            # Check cooldown period
+            last_alert = self.last_alert_time.get(alert_type, 0)
+            cooldown = self.cooldown_periods.get(alert_type, 5)
+            
+            if current_time - last_alert >= cooldown:
+                # Play the alert sound
+                print(f"🚨 {message}")
+                success = self.audio_system.play_alert_sound(priority)
+                
+                if success:
+                    self.last_alert_time[alert_type] = current_time
+                    print(f"   ✅ Audio alert triggered: {priority.upper()} priority")
+                else:
+                    print(f"   ❌ Failed to play audio alert")
+            else:
+                # Still in cooldown period
+                remaining_cooldown = cooldown - (current_time - last_alert)
+                print(f"   ⏳ Audio alert cooldown: {remaining_cooldown:.1f}s remaining for {alert_type}")
+                
+        except Exception as e:
+            print(f"❌ Error triggering audio alert: {e}")
+    
+    def get_alert_stats(self):
+        """Get audio alert statistics"""
+        if not self.audio_system:
+            return {'audio_system': 'disabled'}
+            
+        current_time = time.time()
+        stats = {
+            'audio_system': 'enabled',
+            'consecutive_detections': self.consecutive_detections,
+            'cooldowns': {}
+        }
+        
+        for alert_type, last_time in self.last_alert_time.items():
+            cooldown = self.cooldown_periods.get(alert_type, 5)
+            time_since_last = current_time - last_time
+            remaining = max(0, cooldown - time_since_last)
+            stats['cooldowns'][alert_type] = {
+                'last_alert_ago': time_since_last,
+                'cooldown_remaining': remaining
+            }
+            
+        return stats
+
 def main():
     """Run live feed face recognition with solid root-level optimizations"""
     
@@ -228,6 +355,10 @@ def main():
         # Initialize unique unauthorized tracker
         print("🎯 Initializing Root-Level Optimized Unauthorized Tracker...")
         unauthorized_tracker = UniqueUnauthorizedTracker(similarity_threshold=0.8)
+        
+        # Initialize audio alert manager for unauthorized person detection
+        print("🔊 Initializing Audio Alert Manager...")
+        audio_alert_manager = AudioAlertManager()
         
         # Access the face processor for live feed processing
         processor = system.face_processor
@@ -320,7 +451,7 @@ def main():
         print("�📹 Starting adaptive live face recognition...")
         if is_jetson:
             print("🚀 JETSON TARGET: 30+ FPS with aggressive optimizations")
-        print("🔧 Press 'q' to quit, 's' to show stats, 'u' to show unique stats, 'r' to show refresh stats")
+        print("🔧 Press 'q' to quit, 's' for stats, 'u' for unique stats, 'r' for refresh stats, 'a' for audio stats")
         
         frame_count = 0
         fps_start_time = time.time()
@@ -408,6 +539,9 @@ def main():
                     # Log to Azure asynchronously
                     processor._log_prediction_to_azure_optimized(log_data)
                 
+                # Process audio alerts based on detection results (after Azure logging)
+                audio_alert_manager.process_detection_results(results, frame_count)
+                
                 # Calculate processing time
                 processing_time = time.time() - start_time
                 total_processing_time += processing_time
@@ -450,6 +584,8 @@ def main():
                 show_unauthorized_stats(unauthorized_tracker)
             elif key == ord('r'):
                 show_refresh_stats(auth_refresher)
+            elif key == ord('a'):
+                show_audio_alert_stats(audio_alert_manager)
         
         # Cleanup
         cap.release()
@@ -1073,6 +1209,50 @@ def show_unauthorized_stats(unauthorized_tracker):
             print(f"      Image stored: {'✅' if stored_image else '❌'}")
     else:
         print(f"\n✅ No unauthorized persons detected this session")
+    
+    print("="*60)
+
+def show_audio_alert_stats(audio_alert_manager):
+    """Display audio alert system statistics"""
+    print("\n" + "="*60)
+    print("🔊 AUDIO ALERT SYSTEM STATISTICS")
+    print("="*60)
+    
+    stats = audio_alert_manager.get_alert_stats()
+    
+    if stats.get('audio_system') == 'disabled':
+        print("❌ Audio Alert System: DISABLED")
+        print("   Audio alerts are not available")
+    else:
+        print("✅ Audio Alert System: ENABLED")
+        print(f"📊 Detection Tracking:")
+        print(f"   Consecutive Detections: {stats.get('consecutive_detections', 0)}")
+        
+        if 'cooldowns' in stats and stats['cooldowns']:
+            print(f"\n⏱️ Alert Cooldowns:")
+            for alert_type, cooldown_info in stats['cooldowns'].items():
+                last_ago = cooldown_info.get('last_alert_ago', 0)
+                remaining = cooldown_info.get('cooldown_remaining', 0)
+                
+                alert_name = alert_type.replace('_', ' ').title()
+                print(f"   {alert_name}:")
+                print(f"      Last alert: {last_ago:.1f}s ago")
+                if remaining > 0:
+                    print(f"      Cooldown remaining: {remaining:.1f}s")
+                else:
+                    print(f"      Status: Ready for next alert")
+        else:
+            print(f"\n⏱️ No alerts triggered yet this session")
+        
+        print(f"\n🔊 Alert Priorities:")
+        print(f"   NORMAL: Single unauthorized person (2 beeps)")
+        print(f"   HIGH: Continuous unauthorized activity (3 beeps)")
+        print(f"   CRITICAL: Multiple unauthorized persons (5 beeps)")
+        
+        print(f"\n🎛️ Cooldown Settings:")
+        print(f"   Single unauthorized: 5 seconds")
+        print(f"   Multiple unauthorized: 3 seconds")
+        print(f"   Continuous detection: 15 seconds")
     
     print("="*60)
 
