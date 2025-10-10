@@ -54,57 +54,6 @@ AZURE_IMAGES_FOLDER=unauthorised_person/Image/
 # Recognition Settings
 RECOGNITION_THRESHOLD=0.6
 ```
-
-### Azure Storage Structure
-
-```
-Container: sr001/
-├── authorised/authorised person/
-│   └── authorized_persons.json                    # Face embeddings database
-├── unauthorised_person/
-│   ├── detection_logs/
-│   │   ├── detection_log_2025-10-08.json         # Daily JSON logs
-│   │   ├── detection_log_2025-10-07.json
-│   │   └── ...                                    # Daily detection logs
-│   └── Image/
-│       ├── 2025-10-08/                           # Date-based folders
-│       │   ├── unauthorized_20251008_143052_face_1.jpg
-│       │   └── unauthorized_20251008_143055_face_2.jpg
-│       ├── 2025-10-07/
-│       │   └── ...                                # Previous day images
-│       └── ...                                    # Other dates
-```
-
-### JSON Log Format
-
-Each daily log file contains structured detection data:
-
-```json
-{
-  "metadata": {
-    "last_updated": "2025-10-08T14:30:55.123456",
-    "total_detections": 125,
-    "unauthorized_count": 78,
-    "authorized_count": 47,
-    "log_file": "detection_log_2025-10-08.json",
-    "azure_container": "sr001"
-  },
-  "detections": [
-    {
-      "id": 1,
-      "timestamp": "2025-10-08T14:28:45.789012",
-      "human_time": "2025-10-08 14:28:45",
-      "status": "AUTHORIZED",
-      "person_name": "dhruv",
-      "confidence": "81%",
-      "location": "Camera",
-      "alert_level": "LOW",
-      "additional_info": null
-    }
-  ]
-}
-```
-
 ## 🖥️ Usage
 
 ### Process Image
@@ -119,7 +68,7 @@ python main.py --mode video --input video.mp4 --output results.json
 
 ### Live Webcam
 ```bash
-python main.py --mode webcam
+python test.py
 ```
 
 ## 📊 System Performance
