@@ -33,6 +33,167 @@ except ImportError:
 from dotenv import load_dotenv
 load_dotenv()
 
+def get_geolocation():
+    """Get real GPS coordinates from device location services"""
+    try:
+        # Method 1: Try to get real GPS coordinates using geocoder
+        try:
+            import geocoder
+            location = geocoder.ip('me')
+            if location.ok and location.latlng:
+                lat, lon = location.latlng
+                return f"{lat:.4f}, {lon:.4f}"
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"⚠️ Geocoder error: {e}")
+        
+        # Method 2: Try requests-based IP geolocation for real coordinates
+        try:
+            import requests
+            
+            # Use multiple geolocation services for better accuracy
+            services = [
+                'http://ipapi.co/json/',
+                'http://ip-api.com/json/',
+                'https://ipinfo.io/json'
+            ]
+            
+            for service_url in services:
+                try:
+                    response = requests.get(service_url, timeout=3)
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # Handle different API response formats
+                        lat = data.get('latitude') or data.get('lat')
+                        lon = data.get('longitude') or data.get('lon')
+                        
+                        # For ipinfo.io, coordinates are in 'loc' field as "lat,lon"
+                        if not lat and 'loc' in data:
+                            coords = data['loc'].split(',')
+                            if len(coords) == 2:
+                                lat, lon = float(coords[0]), float(coords[1])
+                        
+                        if lat is not None and lon is not None:
+                            print(f"📍 Real location detected: {lat:.4f}, {lon:.4f}")
+                            return f"{lat:.4f}, {lon:.4f}"
+                except:
+                    continue
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"⚠️ IP geolocation error: {e}")
+        
+        # Method 3: Try to get system GPS if available (Linux)
+        try:
+            import subprocess
+            
+            # Try gpsd if available (common on Linux systems with GPS)
+            result = subprocess.run(['gpspipe', '-w', '-n', '1'], 
+                                  capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                import json
+                gps_data = json.loads(result.stdout.strip())
+                if 'lat' in gps_data and 'lon' in gps_data:
+                    lat, lon = gps_data['lat'], gps_data['lon']
+                    print(f"📍 GPS coordinates: {lat:.4f}, {lon:.4f}")
+                    return f"{lat:.4f}, {lon:.4f}"
+        except:
+            pass
+        
+        # Fallback: Use environment variable only if no real location found
+        static_coords = os.getenv('STATIC_COORDINATES')
+        if static_coords:
+            print(f"⚠️ Using fallback coordinates: {static_coords}")
+            return static_coords
+        
+        # Final fallback
+        print(f"⚠️ No real location available, using default")
+        return "0.0000, 0.0000"
+        
+    except Exception as e:
+        print(f"❌ Geolocation error: {e}")
+        return "0.0000, 0.0000"
+
+def add_timestamp_overlay(image, timestamp_str=None, confidence=None, person_id=None, location=None):
+    """Add timestamp and geolocation overlay to image before Azure upload"""
+    try:
+        # Create a copy of the image to avoid modifying the original
+        img_with_overlay = image.copy()
+        
+        # Get image dimensions
+        height, width = img_with_overlay.shape[:2]
+        
+        # Generate timestamp if not provided
+        if timestamp_str is None:
+            timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Get geolocation if not provided
+        if location is None:
+            location = get_geolocation()
+        
+        # Configure smaller text properties based on image size
+        font_scale = max(0.2, min(width/400, height/400))  # Smaller scale factor
+        thickness = max(1, int(font_scale * 1.5))
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Colors (BGR format)
+        bg_color = (0, 0, 0)       # Black background
+        text_color = (0, 255, 255)  # Yellow text
+        border_color = (0, 0, 255)  # Red border
+        
+        # Prepare text lines
+        timestamp_text = timestamp_str
+        location_text = location if location else "0.0000, 0.0000"
+        
+        # Calculate line height
+        line_height = int(15 * font_scale)
+        
+        # Position for timestamp (top-left)
+        timestamp_y = line_height + 5
+        
+        # Get timestamp text size
+        (ts_width, ts_height), ts_baseline = cv2.getTextSize(timestamp_text, font, font_scale, thickness)
+        
+        # Draw timestamp background and border
+        cv2.rectangle(img_with_overlay, 
+                     (2, timestamp_y - ts_height - 2), 
+                     (ts_width + 6, timestamp_y + ts_baseline + 2), 
+                     bg_color, -1)
+        cv2.rectangle(img_with_overlay, 
+                     (2, timestamp_y - ts_height - 2), 
+                     (ts_width + 6, timestamp_y + ts_baseline + 2), 
+                     border_color, 1)
+        
+        # Draw timestamp text
+        cv2.putText(img_with_overlay, timestamp_text, (4, timestamp_y), font, font_scale, text_color, thickness)
+        
+        # Position for location (bottom-left)
+        location_y = height - 8  # 8 pixels from bottom
+        
+        # Get location text size
+        (loc_width, loc_height), loc_baseline = cv2.getTextSize(location_text, font, font_scale, thickness)
+        
+        # Draw location background and border
+        cv2.rectangle(img_with_overlay, 
+                     (2, location_y - loc_height - 2), 
+                     (loc_width + 6, location_y + loc_baseline + 2), 
+                     bg_color, -1)
+        cv2.rectangle(img_with_overlay, 
+                     (2, location_y - loc_height - 2), 
+                     (loc_width + 6, location_y + loc_baseline + 2), 
+                     border_color, 1)
+        
+        # Draw location text
+        cv2.putText(img_with_overlay, location_text, (4, location_y), font, font_scale, text_color, thickness)
+        
+        return img_with_overlay
+        
+    except Exception as e:
+        print(f"⚠️ Error adding timestamp overlay: {e}")
+        return image  # Return original image if overlay fails
+
 class SystemOptimizer:
     """Root-level system optimization based on hardware detection"""
     
@@ -186,6 +347,9 @@ class OptimizedFaceProcessor:
             'cache_hits': 0,
             'cache_misses': 0
         }
+        
+        # Image counter for consistent numbering
+        self.image_counter = 1
         
         print(f"🚀 Hardware optimizations enabled")
         print(f"👥 Max faces per frame: {self.config['max_faces']}")
@@ -351,6 +515,12 @@ class OptimizedFaceProcessor:
         except Exception as e:
             print(f"❌ Error uploading image to Azure: {e}")
             return ""
+    
+    def get_next_image_number(self) -> int:
+        """Get the next image number and increment counter"""
+        current_number = self.image_counter
+        self.image_counter += 1
+        return current_number
     
     def _log_prediction_to_azure(self, log_entry: Dict[str, Any]) -> bool:
         """Log face recognition prediction to Azure in JSON format with daily files"""
@@ -591,11 +761,25 @@ class OptimizedFaceProcessor:
         # Handle unauthorized persons with async upload
         if not face_result['recognition']['authorized']:
             face_region = image[y:y2, x:x2]
+            
+            # Resize to standard 192x192 for Azure storage
+            face_region = cv2.resize(face_region, (192, 192), interpolation=cv2.INTER_LINEAR)
+            
+            # Add timestamp overlay to the image
+            timestamp_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+            face_region_with_timestamp = add_timestamp_overlay(
+                face_region, 
+                timestamp_str=timestamp_str,
+                confidence=confidence,
+                person_id=face_id
+            )
+            
             timestamp = start_time.strftime("%Y%m%d_%H%M%S")
-            filename = f"unauthorized_{timestamp}_{face_id}.jpg"
+            image_no = self.get_next_image_number()
+            filename = f"unauthorized_{image_no}_{timestamp}.jpg"
             
             # Async image upload
-            future = self.executor.submit(self._upload_image_to_azure, face_region, filename)
+            future = self.executor.submit(self._upload_image_to_azure, face_region_with_timestamp, filename)
             # Store future for later retrieval if needed
             face_result['upload_future'] = future
         
