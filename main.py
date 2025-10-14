@@ -34,87 +34,135 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def get_geolocation():
-    """Get real GPS coordinates from device location services"""
+    """Get current geolocation with dynamic detection - no hardcoded coordinates"""
+    
+    # Method 1: Check for precise coordinates in environment (user-provided only)
+    precise_coords = os.getenv('PRECISE_COORDINATES')
+    if precise_coords:
+        try:
+            lat_str, lon_str = precise_coords.split(',')
+            lat, lon = float(lat_str.strip()), float(lon_str.strip())
+            return f"{lat:.6f}, {lon:.6f}"
+        except Exception:
+            pass
+    
+    # Method 2: Try system GPS (real GPS hardware - most accurate)
     try:
-        # Method 1: Try to get real GPS coordinates using geocoder
-        try:
-            import geocoder
-            location = geocoder.ip('me')
-            if location.ok and location.latlng:
-                lat, lon = location.latlng
-                return f"{lat:.4f}, {lon:.4f}"
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Geocoder error: {e}")
-        
-        # Method 2: Try requests-based IP geolocation for real coordinates
-        try:
-            import requests
-            
-            # Use multiple geolocation services for better accuracy
-            services = [
-                'http://ipapi.co/json/',
-                'http://ip-api.com/json/',
-                'https://ipinfo.io/json'
-            ]
-            
-            for service_url in services:
+        import subprocess
+        # Try gpsd first (GPS daemon)
+        result = subprocess.run(['gpspipe', '-w', '-n', '5'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            import json
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
                 try:
-                    response = requests.get(service_url, timeout=3)
-                    if response.status_code == 200:
-                        data = response.json()
-                        
-                        # Handle different API response formats
-                        lat = data.get('latitude') or data.get('lat')
-                        lon = data.get('longitude') or data.get('lon')
-                        
-                        # For ipinfo.io, coordinates are in 'loc' field as "lat,lon"
-                        if not lat and 'loc' in data:
-                            coords = data['loc'].split(',')
-                            if len(coords) == 2:
-                                lat, lon = float(coords[0]), float(coords[1])
-                        
-                        if lat is not None and lon is not None:
-                            print(f"📍 Real location detected: {lat:.4f}, {lon:.4f}")
-                            return f"{lat:.4f}, {lon:.4f}"
-                except:
+                    gps_data = json.loads(line)
+                    if gps_data.get('class') == 'TPV' and 'lat' in gps_data and 'lon' in gps_data:
+                        lat, lon = gps_data['lat'], gps_data['lon']
+                        # Validate GPS coordinates are reasonable
+                        if -90 <= lat <= 90 and -180 <= lon <= 180:
+                            print(f"🛰️ GPS Hardware: {lat:.6f}, {lon:.6f}")
+                            return f"{lat:.6f}, {lon:.6f}"
+                except Exception:
                     continue
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"⚠️ IP geolocation error: {e}")
+    except Exception:
+        pass
+    
+    # Method 3: Try Android location services (if available)
+    try:
+        import subprocess
+        # Try termux-location for Android environments
+        result = subprocess.run(['termux-location'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            import json
+            location_data = json.loads(result.stdout)
+            lat = location_data.get('latitude')
+            lon = location_data.get('longitude')
+            if lat and lon and -90 <= lat <= 90 and -180 <= lon <= 180:
+                print(f"📱 Android GPS: {lat:.6f}, {lon:.6f}")
+                return f"{lat:.6f}, {lon:.6f}"
+    except Exception:
+        pass
+    
+    # Method 4: Try geocoder library with GPS preference
+    try:
+        import geocoder
         
-        # Method 3: Try to get system GPS if available (Linux)
+        # Try GPS-based methods first (requires GPS hardware)
+        for method in ['osm', 'google']:
+            try:
+                g = geocoder.get('me', method=method)
+                if g.ok and g.latlng:
+                    lat, lon = g.latlng
+                    if -90 <= lat <= 90 and -180 <= lon <= 180:
+                        print(f"🌐 Geocoder-{method}: {lat:.6f}, {lon:.6f}")
+                        return f"{lat:.6f}, {lon:.6f}"
+            except Exception:
+                continue
+        
+        # Fallback to IP-based (less accurate but available)
+        g = geocoder.ip('me')
+        if g.ok and g.latlng:
+            lat, lon = g.latlng
+            print(f"🌍 IP-based location: {lat:.6f}, {lon:.6f}")
+            return f"{lat:.6f}, {lon:.6f}"
+                
+    except ImportError:
+        print("⚠️ Geocoder library not available")
+        pass
+    except Exception:
+        pass
+    
+    # Method 5: Web-based geolocation services (IP-based - dynamic detection)
+    services = [
+        ('ip-api.com', 'http://ip-api.com/json/'),
+        ('ipinfo.io', 'https://ipinfo.io/json'),
+        ('ipapi.co', 'http://ipapi.co/json/')
+    ]
+    
+    import requests
+    for service_name, service_url in services:
         try:
-            import subprocess
-            
-            # Try gpsd if available (common on Linux systems with GPS)
-            result = subprocess.run(['gpspipe', '-w', '-n', '1'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                import json
-                gps_data = json.loads(result.stdout.strip())
-                if 'lat' in gps_data and 'lon' in gps_data:
-                    lat, lon = gps_data['lat'], gps_data['lon']
-                    print(f"📍 GPS coordinates: {lat:.4f}, {lon:.4f}")
-                    return f"{lat:.4f}, {lon:.4f}"
-        except:
+            response = requests.get(service_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Handle different response formats
+                lat = data.get('latitude') or data.get('lat')
+                lon = data.get('longitude') or data.get('lon')
+                
+                # Handle ipinfo.io format
+                if not lat and 'loc' in data:
+                    coords = data['loc'].split(',')
+                    if len(coords) == 2:
+                        lat, lon = float(coords[0]), float(coords[1])
+                
+                if lat and lon:
+                    print(f"🌐 {service_name}: {lat:.6f}, {lon:.6f}")
+                    return f"{lat:.6f}, {lon:.6f}"
+        except Exception:
+            continue
+    
+    # Method 6: Check for user-defined static coordinates (not hardcoded)
+    static_coords = os.getenv('STATIC_COORDINATES')
+    if static_coords:
+        try:
+            lat_str, lon_str = static_coords.split(',')
+            lat, lon = float(lat_str.strip()), float(lon_str.strip())
+            print(f"📍 User-defined static: {lat:.6f}, {lon:.6f}")
+            return f"{lat:.6f}, {lon:.6f}"
+        except Exception:
             pass
-        
-        # Fallback: Use environment variable only if no real location found
-        static_coords = os.getenv('STATIC_COORDINATES')
-        if static_coords:
-            print(f"⚠️ Using fallback coordinates: {static_coords}")
-            return static_coords
-        
-        # Final fallback
-        print(f"⚠️ No real location available, using default")
-        return "0.0000, 0.0000"
-        
-    except Exception as e:
-        print(f"❌ Geolocation error: {e}")
-        return "0.0000, 0.0000"
+    
+    # No hardcoded fallback - return error state
+    print("❌ No location detection methods succeeded")
+    print("💡 Suggestions:")
+    print("  - Check internet connection for IP-based location")
+    print("  - Install GPS hardware for precise location")
+    print("  - Set PRECISE_COORDINATES environment variable")
+    return "0.000000, 0.000000"
 
 def add_timestamp_overlay(image, timestamp_str=None, confidence=None, person_id=None, location=None):
     """Add timestamp and geolocation overlay to image before Azure upload"""
