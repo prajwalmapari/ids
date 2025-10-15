@@ -24,7 +24,8 @@ from main import OptimizedFaceRecognitionSystem
 
 # Import audio alert system
 try:
-    spec = importlib.util.spec_from_file_location("audio_alert", "/home/ubuntu24/ids/audio-alert.py")
+    audio_alert_path = os.path.join(os.path.dirname(__file__), "audio-alert.py")
+    spec = importlib.util.spec_from_file_location("audio_alert", audio_alert_path)
     audio_alert = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(audio_alert)
     AudioAlertSystem = audio_alert.AudioAlertSystem
@@ -561,6 +562,44 @@ class AudioAlertManager:
             
         return stats
 
+def verify_gpu_setup(processor):
+    """Verify GPU configuration and usage"""
+    print("\n" + "="*60)
+    print("🎮 GPU VERIFICATION")
+    print("="*60)
+    
+    try:
+        gpu_status = processor.verify_gpu_usage()
+        
+        print(f"🔧 GPU Configured: {'✅ YES' if gpu_status['gpu_configured'] else '❌ NO'}")
+        print(f"🚀 CUDA Available: {'✅ YES' if gpu_status['cuda_available'] else '❌ NO'}")
+        
+        if gpu_status['insightface_providers']:
+            print(f"\n📋 InsightFace Model Providers:")
+            for model_info in gpu_status['insightface_providers']:
+                providers = model_info['providers']
+                model_name = model_info['model']
+                using_gpu = 'CUDAExecutionProvider' in providers
+                status = "✅ GPU" if using_gpu else "💻 CPU"
+                print(f"   {model_name}: {status} ({', '.join(providers)})")
+        
+        if gpu_status['memory_usage'] and isinstance(gpu_status['memory_usage'], dict):
+            usage = gpu_status['memory_usage']
+            print(f"\n💾 GPU Memory Usage:")
+            print(f"   Used: {usage['used_mb']:.1f} MB")
+            print(f"   Total: {usage['total_mb']:.1f} MB")
+            print(f"   Utilization: {usage['utilization_percent']:.1f}%")
+        elif gpu_status['memory_usage']:
+            print(f"\n💾 GPU Memory: {gpu_status['memory_usage']}")
+        
+        if 'error' in gpu_status:
+            print(f"\n⚠️ Error: {gpu_status['error']}")
+            
+    except Exception as e:
+        print(f"❌ GPU verification failed: {e}")
+    
+    print("="*60)
+
 def main():
     """Run live feed face recognition with solid root-level optimizations"""
     
@@ -579,6 +618,9 @@ def main():
         
         # Access the face processor for live feed processing
         processor = system.face_processor
+        
+        # Verify GPU setup
+        verify_gpu_setup(processor)
         
         # Initialize automatic authorized persons refresher
         print("🔄 Initializing Authorized Persons Auto-Refresher...")
@@ -676,17 +718,11 @@ def main():
         processed_frames = 0
         
         # Adaptive frame processing based on system capabilities
-        if is_jetson:
-            # Aggressive Jetson optimizations for 30+ FPS
-            frame_skip = 1      # Process every frame for maximum responsiveness
-            batch_process = 5   # Process recognition in batches of 5
-            print(f"🚀 JETSON AGGRESSIVE: frame_skip={frame_skip}, batch_process={batch_process}")
-        else:
-            frame_skip = 1 if available_cores >= 8 else 2 if available_cores >= 4 else 3
-            batch_process = 1
-            print(f"🔧 Adaptive frame skip: {frame_skip} (based on {available_cores} cores)")
+        # Initialize adaptive FPS controller for 30 FPS target
+        fps_controller = AdaptiveFPSController(target_fps=30.0, window_size=30)
+        print(f"🎯 Adaptive FPS Controller initialized: Target 30 FPS")
         
-        # Jetson-specific performance tracking
+        # Jetson-specific performance tracking (legacy support)
         jetson_fps_window = []
         jetson_target_fps = 30.0
         last_fps_check = time.time()
@@ -700,41 +736,25 @@ def main():
             frame_count += 1
             current_time = time.time()
             
-            # Jetson FPS monitoring and adaptive processing
-            if is_jetson:
-                # Calculate real-time FPS for Jetson
-                if current_time - last_fps_check >= 1.0:  # Every second
-                    recent_fps = len(jetson_fps_window)
-                    jetson_fps_window = []
-                    last_fps_check = current_time
-                    
-                    # Adaptive processing based on FPS performance
-                    if recent_fps < jetson_target_fps * 0.8:  # If below 24 FPS (80% of target)
-                        # More aggressive optimizations
-                        frame_skip = min(frame_skip + 1, 3)  # Increase skip up to 3
-                        print(f"⚡ Jetson adaptive: FPS {recent_fps:.1f} < target, frame_skip={frame_skip}")
-                    elif recent_fps > jetson_target_fps * 0.95:  # If above 28.5 FPS
-                        # Reduce skip to process more frames
-                        frame_skip = max(frame_skip - 1, 1)  # Decrease skip to minimum 1
-                
-                jetson_fps_window.append(current_time)
+            # Determine if frame should be processed using adaptive controller
+            should_process = fps_controller.should_process_frame(frame_count)
             
-            # Process frames based on adaptive skip ratio
-            if frame_count % frame_skip == 0:
+            if should_process:
                 processed_frames += 1
                 
                 # Start timing
                 start_time = time.time()
                 
-                # Choose processing method based on hardware
-                if is_jetson:
-                    # Jetson-optimized processing for 30+ FPS
-                    results = process_frame_jetson_30fps(processor, frame, frame_count, 
-                                                       unauthorized_tracker, batch_process)
-                else:
-                    # Standard adaptive processing
-                    results = process_frame_optimized(processor, frame, frame_count, 
-                                                    unauthorized_tracker, available_cores)
+                # Use adaptive processing optimized for 30 FPS
+                results = process_frame_adaptive_30fps(processor, frame, frame_count, 
+                                                     unauthorized_tracker, fps_controller)
+                
+                # Calculate processing time
+                processing_time = time.time() - start_time
+                total_processing_time += processing_time
+                
+                # Update FPS controller with timing information
+                fps_controller.update_frame_timing(processing_time)
                 
                 # Log detections to Azure (every processed frame)
                 if results.get('faces'):
@@ -756,37 +776,31 @@ def main():
                     # Log to Azure asynchronously
                     processor._log_prediction_to_azure_optimized(log_data)
                 
-                # Process audio alerts based on detection results (after Azure logging)
+                # Process audio alerts based on detection results
                 audio_alert_manager.process_detection_results(results, frame_count)
                 
-                # Calculate processing time
-                processing_time = time.time() - start_time
-                total_processing_time += processing_time
-                
-                # Draw results on frame
-                if is_jetson:
-                    draw_results_jetson_minimal(frame, results, processing_time)
-                else:
-                    draw_results_optimized(frame, results, processing_time, unauthorized_tracker)
+                # Draw results on frame with adaptive quality
+                draw_results_adaptive_30fps(frame, results, processing_time, fps_controller)
                 
                 # Show performance info periodically
                 if processed_frames % 15 == 0:  # Every 15 processed frames
+                    fps_stats = fps_controller.get_stats()
                     fps = frame_count / (current_time - fps_start_time)
                     avg_processing_time = total_processing_time / processed_frames
                     
                     stats = unauthorized_tracker.get_session_stats()
                     
-                    if is_jetson:
-                        recent_fps = len(jetson_fps_window) if jetson_fps_window else 0
-                        fps_status = "✅" if recent_fps >= jetson_target_fps * 0.9 else "⚠️" if recent_fps >= jetson_target_fps * 0.7 else "❌"
-                        print(f"🚀 JETSON {fps_status} Frame {frame_count}: {results['total_faces']} faces, "
-                              f"FPS: {fps:.1f} (target: {jetson_target_fps}), "
-                              f"Process: {avg_processing_time:.3f}s, Skip: {frame_skip}")
-                    else:
-                        print(f"📊 Frame {frame_count}: {results['total_faces']} faces, "
-                              f"{results['authorized_count']} auth, "
-                              f"{stats['unique_unauthorized_persons']} unique, "
-                              f"FPS: {fps:.1f}, Avg proc: {avg_processing_time:.3f}s")
+                    print(f"🎯 30FPS Frame {frame_count}: {results['total_faces']} faces, "
+                          f"{results['authorized_count']} auth, "
+                          f"{stats['unique_unauthorized_persons']} unique, "
+                          f"Current FPS: {fps_stats.get('current_fps', 0):.1f}, "
+                          f"Quality: {fps_stats.get('quality_level', 'medium')}, "
+                          f"Skip: {fps_stats.get('frame_skip', 1)}, "
+                          f"Process: {avg_processing_time:.3f}s")
+            else:
+                # Frame skipped - still draw previous results if available
+                if 'results' in locals():
+                    draw_results_adaptive_30fps(frame, results, 0.0, fps_controller, skipped=True)
             
             # Display frame
             cv2.imshow('Adaptive Face Recognition System', frame)
@@ -834,6 +848,110 @@ def main():
         # Final memory cleanup
         import gc
         gc.collect()
+
+def draw_results_adaptive_30fps(frame: np.ndarray, results: dict, processing_time: float, 
+                               fps_controller, skipped: bool = False):
+    """Draw results with adaptive UI optimized for 30 FPS performance"""
+    
+    height, width = frame.shape[:2]
+    fps_stats = fps_controller.get_stats()
+    quality_level = fps_stats.get('quality_level', 'medium')
+    current_fps = fps_stats.get('current_fps', 0)
+    
+    # Adaptive header size based on performance
+    header_height = 90 if quality_level == 'high' else 75 if quality_level == 'medium' else 60
+    
+    # Header background with performance color coding
+    if current_fps >= 28:
+        header_color = (0, 40, 0)  # Dark green for excellent performance
+    elif current_fps >= 24:
+        header_color = (0, 30, 30)  # Dark yellow for good performance
+    else:
+        header_color = (0, 0, 40)  # Dark red for poor performance
+    
+    cv2.rectangle(frame, (0, 0), (width, header_height), header_color, -1)
+    
+    # Performance status indicator
+    fps_status = "🟢" if current_fps >= 28 else "🟡" if current_fps >= 24 else "🔴"
+    
+    # Main info line with FPS emphasis
+    if not skipped:
+        header_text = f"{fps_status} 30FPS: {current_fps:.1f} | Faces:{results.get('total_faces', 0)} Auth:{results.get('authorized_count', 0)}"
+    else:
+        header_text = f"{fps_status} 30FPS: {current_fps:.1f} | FRAME SKIPPED"
+    
+    font_size = 0.7 if quality_level == 'high' else 0.6 if quality_level == 'medium' else 0.5
+    cv2.putText(frame, header_text, (5, 22), cv2.FONT_HERSHEY_SIMPLEX, font_size, (255, 255, 255), 2)
+    
+    # Performance and quality info
+    if not skipped:
+        perf_text = f"Quality: {quality_level.upper()} | Skip: {fps_stats.get('frame_skip', 1)} | Process: {processing_time:.3f}s"
+        cv2.putText(frame, perf_text, (5, 44), cv2.FONT_HERSHEY_SIMPLEX, font_size - 0.1, (0, 255, 255), 1)
+        
+        # Unique tracking info
+        if 'unique_unauthorized_count' in results:
+            unique_text = f"Unique Unauthorized: {results['unique_unauthorized_count']} | Stored: {results.get('unique_unauthorized_stored', 0)}"
+            cv2.putText(frame, unique_text, (5, 66), cv2.FONT_HERSHEY_SIMPLEX, font_size - 0.2, (255, 255, 255), 1)
+    
+    # System status
+    status_text = f"☁️ GPU+Azure | 6-Core Optimized | Quality: {quality_level}"
+    cv2.putText(frame, status_text, (5, header_height - 5), cv2.FONT_HERSHEY_SIMPLEX, font_size - 0.2, (255, 255, 255), 1)
+    
+    # Draw face boxes with adaptive detail (only if not skipped)
+    if not skipped and 'faces' in results:
+        for face in results['faces']:
+            bbox = face.get('bbox', [])
+            if len(bbox) != 4:
+                continue
+            
+            x, y, w, h = bbox
+            authorized = face['recognition']['authorized']
+            is_new_unique = face.get('is_new_unique', False)
+            confidence = face['recognition']['confidence']
+            temporally_consistent = face['recognition'].get('temporally_consistent', True)
+            
+            # Adaptive color coding with temporal consistency
+            if authorized:
+                color = (0, 255, 0) if temporally_consistent else (0, 200, 100)  # Green variants
+                label = f"✓ {face['recognition']['name']}"
+            else:
+                if is_new_unique:
+                    color = (0, 0, 255) if temporally_consistent else (0, 0, 200)  # Red variants
+                    label = f"✗ NEW"
+                else:
+                    color = (0, 165, 255) if temporally_consistent else (0, 120, 200)  # Orange variants
+                    label = f"✗ {face.get('unique_id', 'UNK')}"
+            
+            # Adaptive box thickness and detail based on quality level
+            if quality_level == 'high':
+                thickness = 2
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
+                # Show full details
+                label_with_conf = f"{label} ({confidence:.2f})"
+                cv2.putText(frame, label_with_conf, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                
+                # Quality indicators
+                if 'quality_assessment' in face:
+                    quality_score = face['quality_assessment']['score']
+                    quality_indicator = f"Q:{quality_score:.2f}"
+                    cv2.putText(frame, quality_indicator, (x, y + h + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
+                
+            elif quality_level == 'medium':
+                thickness = 2
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
+                # Show basic details
+                cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                
+            else:  # low quality
+                thickness = 1
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, thickness)
+                # Minimal labels
+                simple_label = "✓" if authorized else "✗"
+                cv2.putText(frame, simple_label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            
+            # Temporal consistency indicator (subtle)
+            if not temporally_consistent and quality_level in ['high', 'medium']:
+                cv2.circle(frame, (x + w - 10, y + 10), 3, (0, 255, 255), -1)  # Yellow dot for inconsistency
 
 def process_frame_jetson_30fps(processor, frame, frame_count, unauthorized_tracker, batch_process):
     """Ultra-optimized frame processing for Jetson 30+ FPS target"""
@@ -1305,7 +1423,286 @@ def draw_results_optimized(frame: np.ndarray, results: dict, processing_time: fl
             simple_label = "✓" if authorized else "✗"
             cv2.putText(frame, simple_label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-def process_frame_with_unique_tracking(processor, frame, frame_count, unauthorized_tracker):
+class AdaptiveFPSController:
+    """Adaptive FPS controller to maintain consistent 30 FPS performance"""
+    
+    def __init__(self, target_fps: float = 30.0, window_size: int = 30):
+        self.target_fps = target_fps
+        self.window_size = window_size
+        self.frame_times = []
+        self.processing_times = []
+        self.last_frame_time = time.time()
+        self.frame_skip = 1
+        self.quality_level = 'high'  # high, medium, low
+        
+        # Adaptive thresholds
+        self.fps_tolerance = 0.9  # 90% of target FPS
+        self.fps_excellent = 0.98  # 98% of target FPS
+        
+    def update_frame_timing(self, processing_time: float):
+        """Update timing statistics and adjust processing strategy"""
+        current_time = time.time()
+        frame_interval = current_time - self.last_frame_time
+        self.last_frame_time = current_time
+        
+        # Update circular buffers
+        self.frame_times.append(frame_interval)
+        self.processing_times.append(processing_time)
+        
+        if len(self.frame_times) > self.window_size:
+            self.frame_times.pop(0)
+            self.processing_times.pop(0)
+        
+        # Calculate current performance
+        if len(self.frame_times) >= 5:  # Need some samples
+            avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+            current_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+            avg_processing_time = sum(self.processing_times) / len(self.processing_times)
+            
+            # Adaptive strategy adjustment
+            self._adjust_strategy(current_fps, avg_processing_time)
+    
+    def _adjust_strategy(self, current_fps: float, avg_processing_time: float):
+        """Adjust processing strategy based on performance"""
+        target_threshold = self.target_fps * self.fps_tolerance
+        excellent_threshold = self.target_fps * self.fps_excellent
+        
+        if current_fps >= excellent_threshold:
+            # Excellent performance - can increase quality
+            if self.quality_level == 'medium':
+                self.quality_level = 'high'
+                self.frame_skip = 1
+            elif self.quality_level == 'low':
+                self.quality_level = 'medium'
+                self.frame_skip = max(1, self.frame_skip - 1)
+        
+        elif current_fps >= target_threshold:
+            # Good performance - maintain current settings
+            pass
+        
+        elif current_fps >= target_threshold * 0.8:
+            # Below target but not critical - minor adjustments
+            if self.quality_level == 'high':
+                self.quality_level = 'medium'
+            elif self.frame_skip < 2:
+                self.frame_skip = 2
+        
+        else:
+            # Critical performance - aggressive optimization
+            if self.quality_level == 'high':
+                self.quality_level = 'medium'
+                self.frame_skip = 2
+            elif self.quality_level == 'medium':
+                self.quality_level = 'low'
+                self.frame_skip = min(3, self.frame_skip + 1)
+            else:
+                self.frame_skip = min(4, self.frame_skip + 1)
+    
+    def should_process_frame(self, frame_count: int) -> bool:
+        """Determine if frame should be processed based on adaptive skip strategy"""
+        return frame_count % self.frame_skip == 0
+    
+    def get_processing_config(self) -> dict:
+        """Get current processing configuration"""
+        configs = {
+            'high': {
+                'max_faces': 8,
+                'detection_size': (512, 512),
+                'enable_quality_assessment': True,
+                'enable_temporal_validation': True,
+                'preprocessing_level': 'full'
+            },
+            'medium': {
+                'max_faces': 6,
+                'detection_size': (416, 416),
+                'enable_quality_assessment': True,
+                'enable_temporal_validation': True,
+                'preprocessing_level': 'moderate'
+            },
+            'low': {
+                'max_faces': 4,
+                'detection_size': (320, 320),
+                'enable_quality_assessment': False,
+                'enable_temporal_validation': False,
+                'preprocessing_level': 'minimal'
+            }
+        }
+        return configs.get(self.quality_level, configs['medium'])
+    
+    def get_stats(self) -> dict:
+        """Get current performance statistics"""
+        if not self.frame_times:
+            return {'status': 'initializing'}
+        
+        avg_frame_time = sum(self.frame_times) / len(self.frame_times)
+        current_fps = 1.0 / avg_frame_time if avg_frame_time > 0 else 0
+        avg_processing_time = sum(self.processing_times) / len(self.processing_times)
+        
+        return {
+            'current_fps': current_fps,
+            'target_fps': self.target_fps,
+            'frame_skip': self.frame_skip,
+            'quality_level': self.quality_level,
+            'avg_processing_time': avg_processing_time,
+            'performance_ratio': current_fps / self.target_fps if self.target_fps > 0 else 0
+        }
+
+def process_frame_adaptive_30fps(processor, frame, frame_count, unauthorized_tracker, fps_controller):
+    """Adaptive frame processing optimized for 30 FPS with quality scaling"""
+    
+    # Get current processing configuration
+    config = fps_controller.get_processing_config()
+    
+    # Adaptive preprocessing based on quality level
+    if config['preprocessing_level'] == 'full':
+        # Full preprocessing with all enhancements
+        processed_frame = processor._preprocess_image(frame)
+    elif config['preprocessing_level'] == 'moderate':
+        # Moderate preprocessing - skip some enhancements
+        height, width = frame.shape[:2]
+        if width > 640:
+            scale = 640 / width
+            new_width = 640
+            new_height = int(height * scale)
+            processed_frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+        else:
+            processed_frame = frame
+    else:
+        # Minimal preprocessing - just resize if needed
+        height, width = frame.shape[:2]
+        if width > 416:
+            scale = 416 / width
+            new_width = 416
+            new_height = int(height * scale)
+            processed_frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_NEAREST)
+        else:
+            processed_frame = frame
+    
+    # Get face detections with adaptive limits
+    faces = processor.face_app.get(processed_frame)
+    
+    # Limit faces based on quality level
+    max_faces = config['max_faces']
+    if len(faces) > max_faces:
+        faces = sorted(faces, key=lambda x: x.det_score, reverse=True)[:max_faces]
+    
+    results = {
+        'total_faces': len(faces),
+        'authorized_count': 0,
+        'unauthorized_count': 0,
+        'unique_unauthorized_count': 0,
+        'faces': [],
+        'unique_unauthorized_stored': 0,
+        'processing_config': config,
+        'fps_stats': fps_controller.get_stats()
+    }
+    
+    # Process faces with adaptive quality
+    for i, face in enumerate(faces):
+        face_id = f"face_{i+1}"
+        
+        # Extract face information with scaling back if needed
+        bbox = face.bbox.astype(int)
+        if processed_frame is not frame:
+            scale_factor = frame.shape[1] / processed_frame.shape[1]
+            bbox = (bbox * scale_factor).astype(int)
+        
+        x, y, x2, y2 = bbox
+        w, h = x2 - x, y2 - y
+        
+        # Get face embedding
+        face_embedding = face.normed_embedding
+        
+        # Apply quality assessment based on config
+        if config['enable_quality_assessment']:
+            face_region = frame[max(0, y):min(frame.shape[0], y2), 
+                              max(0, x):min(frame.shape[1], x2)]
+            quality_assessment = processor._assess_face_quality(face_region, bbox)
+        else:
+            quality_assessment = {'score': 1.0, 'meets_threshold': True, 'factors': {}}
+        
+        # Face recognition with optional temporal validation
+        if config['enable_temporal_validation']:
+            initial_name, initial_confidence, metadata = processor.recognize_face_from_embedding(face_embedding)
+            name, confidence, metadata, is_temporally_consistent = processor.temporal_validator.validate_face_recognition(
+                face_embedding, (initial_name, initial_confidence, metadata), [x, y, w, h]
+            )
+        else:
+            name, confidence, metadata = processor.recognize_face_from_embedding(face_embedding)
+            is_temporally_consistent = True
+            initial_confidence = confidence
+        
+        # Apply quality-based confidence adjustment
+        original_confidence = confidence
+        if config['enable_quality_assessment'] and not quality_assessment['meets_threshold']:
+            confidence = confidence * quality_assessment['score']
+        
+        authorized = name != "Unknown" and confidence >= processor.recognition_threshold
+        
+        face_result = {
+            'face_id': face_id,
+            'recognition': {
+                'name': name,
+                'confidence': confidence,
+                'original_confidence': original_confidence,
+                'authorized': authorized,
+                'temporally_consistent': is_temporally_consistent
+            },
+            'bbox': [x, y, w, h],
+            'quality_assessment': quality_assessment,
+            'unique_id': None,
+            'is_new_unique': False
+        }
+        
+        if authorized:
+            results['authorized_count'] += 1
+        else:
+            results['unauthorized_count'] += 1
+            
+            # Unique tracking for unauthorized persons
+            is_unique, unique_id = unauthorized_tracker.is_unique_unauthorized_person(face_embedding)
+            face_result['unique_id'] = unique_id
+            face_result['is_new_unique'] = is_unique
+            
+            if is_unique:
+                results['unique_unauthorized_count'] += 1
+                
+                # Store image only for high-quality unique unauthorized persons
+                if (unauthorized_tracker.should_store_image(unique_id) and 
+                    quality_assessment['meets_threshold']):
+                    
+                    face_region = frame[max(0, y):min(frame.shape[0], y2), 
+                                      max(0, x):min(frame.shape[1], x2)]
+                    
+                    if face_region.size > 0:
+                        # Resize to standard 192x192 for Azure storage
+                        face_region = cv2.resize(face_region, (192, 192), interpolation=cv2.INTER_LINEAR)
+                        
+                        # Add timestamp overlay
+                        timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        face_region_with_timestamp = add_timestamp_overlay(
+                            face_region, 
+                            timestamp_str=timestamp_str,
+                            confidence=confidence,
+                            person_id=unique_id
+                        )
+                        
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        image_no = unauthorized_tracker.get_next_image_number()
+                        filename = f"unauthorized_{image_no}_{timestamp}.jpg"
+                        
+                        # Async upload for performance
+                        try:
+                            image_url = processor._upload_image_to_azure(face_region_with_timestamp, filename)
+                            if image_url:
+                                results['unique_unauthorized_stored'] += 1
+                                print(f"🎯 30FPS stored: {unique_id} with timestamp (192x192)")
+                        except Exception:
+                            pass  # Silent fail for performance
+        
+        results['faces'].append(face_result)
+    
+    return results
     """Process frame and track unique unauthorized persons"""
     
     # Get face detections from the processor
